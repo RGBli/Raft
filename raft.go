@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	ElectionTimeout = 150 * time.Millisecond
-	HeartbeatInterval = 100 * time.Millisecond
+	ElectionTimeout     = 150 * time.Millisecond
+	HeartbeatInterval   = 100 * time.Millisecond
 	LogGenerateInterval = 3000 * time.Millisecond
 )
 
@@ -36,7 +36,7 @@ type peer string
 
 // Raft Node
 type Raft struct {
-	mu          sync.Mutex
+	mu          sync.RWMutex
 	me          int
 	peers       map[int]peer
 	state       State
@@ -56,6 +56,7 @@ type Raft struct {
 	toLeaderChan  chan struct{}
 }
 
+// broadcastRequestVote is called when a follower becomes a candidate
 func (rf *Raft) broadcastRequestVote() {
 	var args = VoteArgs{
 		Term:        rf.currentTerm,
@@ -96,6 +97,7 @@ func (rf *Raft) sendRequestVote(id int, args VoteArgs, reply *VoteReply) {
 	}
 }
 
+// broadcastHeartbeat is called by leader to maintain the heartbeat
 func (rf *Raft) broadcastHeartbeat() {
 	for i := range rf.peers {
 		var args AppendEntriesArgs
@@ -111,7 +113,7 @@ func (rf *Raft) broadcastHeartbeat() {
 			args.PrevLogIndex = prevLogIndex
 			args.PrevLogTerm = rf.logs[prevLogIndex].LogTerm
 			args.Entries = rf.logs[prevLogIndex:]
-			log.Printf("send entries: %v\n", args.Entries)
+			log.Printf("leader-%d send entries to %d: %+v\n", rf.me, i, args.Entries)
 		}
 
 		go func(i int, args AppendEntriesArgs) {
@@ -133,7 +135,7 @@ func (rf *Raft) sendHeartbeat(id int, args AppendEntriesArgs, reply *AppendEntri
 	if reply.Success {
 		if reply.NextIndex > 0 {
 			rf.nextIndex[id] = reply.NextIndex
-			rf.matchIndex[id] = rf.nextIndex[id] - 1
+			rf.matchIndex[id] = reply.NextIndex - 1
 		}
 	} else {
 		// if leader falls behind the follower, leader becomes follower
@@ -143,11 +145,12 @@ func (rf *Raft) sendHeartbeat(id int, args AppendEntriesArgs, reply *AppendEntri
 			rf.votedFor = -1
 		} else { // if follower was down once
 			rf.nextIndex[id] = reply.NextIndex
-			rf.matchIndex[id] = rf.nextIndex[id] - 1
+			rf.matchIndex[id] = reply.NextIndex - 1
 		}
 	}
 }
 
+// getLastIndex returns the last index of log entries
 func (rf *Raft) getLastIndex() int {
 	logLen := len(rf.logs)
 	if logLen == 0 {
@@ -156,7 +159,7 @@ func (rf *Raft) getLastIndex() int {
 	return rf.logs[logLen-1].LogIndex
 }
 
-// start a raft peer
+// startRaft is used to start a raft node
 func (rf *Raft) startRaft() {
 	// raft peer is initialized as a follower
 	rf.state = Follower

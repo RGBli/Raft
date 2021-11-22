@@ -89,7 +89,7 @@ func (rf *Raft) Heartbeat(args AppendEntriesArgs, reply *AppendEntriesReply) err
 	return nil
 }
 
-// start RPC server
+// startRPC is used to start a RPC server
 func (rf *Raft) startRPC(port string) {
 	rpc.Register(rf)
 	rpc.HandleHTTP()

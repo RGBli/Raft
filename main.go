@@ -6,8 +6,8 @@ import (
 )
 
 func main() {
-	id := flag.Int("id", 1, "peer ID")
-	cluster := flag.String("cluster", "127.0.0.1:8080", "comma sep")
+	id := flag.Int("id", 1, "peer id")
+	cluster := flag.String("cluster", "127.0.0.1:8080,127.0.0.1:8081", "seperated by comma")
 	port := flag.String("port", ":8080", "rpc listen port")
 
 	flag.Parse()
@@ -18,7 +18,7 @@ func main() {
 		peers[i] = peer(v)
 	}
 
-	raft := &Raft{}
+	raft := new(Raft)
 	raft.me = *id
 	raft.peers = peers
 	raft.startRPC(*port)
