@@ -19,7 +19,7 @@ func main() {
 	}
 
 	raft := new(Raft)
-	raft.me = *id
+	raft.id = *id
 	raft.peers = peers
 	raft.startRPC(*port)
 	raft.startRaft()

@@ -37,7 +37,7 @@ type peer string
 // Raft Node
 type Raft struct {
 	mu          sync.RWMutex
-	me          int
+	id          int
 	peers       map[int]peer
 	state       State
 	currentTerm int
@@ -60,14 +60,19 @@ type Raft struct {
 func (rf *Raft) broadcastRequestVote() {
 	var args = VoteArgs{
 		Term:        rf.currentTerm,
-		CandidateID: rf.me,
+		CandidateID: rf.id,
 	}
 
-	for k := range rf.peers {
+	for peer := range rf.peers {
 		go func(i int) {
+			defer func() {
+				if err := recover(); err != nil {
+					log.Printf("[broadcastRequestVote] err: %v", err)
+				}
+			}()
 			var reply VoteReply
 			rf.sendRequestVote(i, args, &reply)
-		}(k)
+		}(peer)
 	}
 }
 
@@ -102,7 +107,7 @@ func (rf *Raft) broadcastHeartbeat() {
 	for i := range rf.peers {
 		var args AppendEntriesArgs
 		args.Term = rf.currentTerm
-		args.LeaderID = rf.me
+		args.LeaderID = rf.id
 		args.LeaderCommit = rf.commitIndex
 
 		// calculate preLogIndex and preLogTerm
@@ -113,10 +118,15 @@ func (rf *Raft) broadcastHeartbeat() {
 			args.PrevLogIndex = prevLogIndex
 			args.PrevLogTerm = rf.logs[prevLogIndex].LogTerm
 			args.Entries = rf.logs[prevLogIndex:]
-			log.Printf("leader-%d send entries to %d: %+v\n", rf.me, i, args.Entries)
+			log.Printf("leader-%d send entries to %d: %+v\n", rf.id, i, args.Entries)
 		}
 
 		go func(i int, args AppendEntriesArgs) {
+			defer func() {
+				if err := recover(); err != nil {
+					log.Printf("[broadcastHeartbeat] err: %v", err)
+				}
+			}()
 			var reply AppendEntriesReply
 			rf.sendHeartbeat(i, args, &reply)
 		}(i, args)
@@ -137,16 +147,16 @@ func (rf *Raft) sendHeartbeat(id int, args AppendEntriesArgs, reply *AppendEntri
 			rf.nextIndex[id] = reply.NextIndex
 			rf.matchIndex[id] = reply.NextIndex - 1
 		}
-	} else {
-		// if leader falls behind the follower, leader becomes follower
-		if reply.Term > rf.currentTerm {
-			rf.currentTerm = reply.Term
-			rf.state = Follower
-			rf.votedFor = -1
-		} else { // if follower was down once
-			rf.nextIndex[id] = reply.NextIndex
-			rf.matchIndex[id] = reply.NextIndex - 1
-		}
+		return
+	}
+	// if leader falls behind the follower, leader becomes follower
+	if reply.Term > rf.currentTerm {
+		rf.currentTerm = reply.Term
+		rf.state = Follower
+		rf.votedFor = -1
+	} else { // if follower was down once
+		rf.nextIndex[id] = reply.NextIndex
+		rf.matchIndex[id] = reply.NextIndex - 1
 	}
 }
 
@@ -173,25 +183,32 @@ func (rf *Raft) startRaft() {
 		case Follower:
 			select {
 			case <-rf.heartbeatChan:
-				log.Printf("follower-%d recived heartbeat\n", rf.me)
+				log.Printf("follower-%d recived heartbeat\n", rf.id)
 			// candidate election timeout and follower heartbeat timeout both set as a random duration of 150-300ms for convenience
-			case <-time.After(randDuration(ElectionTimeout)):
-				log.Printf("follower-%d timeout\n", rf.me)
+			case <-time.After(randDuration(ElectionTimeout, ElectionTimeout*2)):
+				log.Printf("follower-%d timeout\n", rf.id)
 				rf.state = Candidate
 			}
 		case Candidate:
-			log.Printf("follower-%d becomes candidate", rf.me)
+			log.Printf("follower-%d becomes candidate", rf.id)
 			rf.currentTerm++
-			rf.votedFor = rf.me
+			rf.votedFor = rf.id
 			rf.voteCount = 1
-			go rf.broadcastRequestVote()
+			go func() {
+				defer func() {
+					if err := recover(); err != nil {
+						log.Printf("[broadcastHeartbeat] err: %v", err)
+					}
+				}()
+				rf.broadcastRequestVote()
+			}()
 
 			select {
 			// fail to become leader after election timeout
-			case <-time.After(randDuration(ElectionTimeout)):
+			case <-time.After(randDuration(ElectionTimeout, ElectionTimeout*2)):
 				rf.state = Follower
 			case <-rf.toLeaderChan:
-				log.Printf("candidate-%d becomes leader", rf.me)
+				log.Printf("candidate-%d becomes leader", rf.id)
 				rf.state = Leader
 
 				// initialize peers' nextIndex and matchIndex
@@ -204,6 +221,11 @@ func (rf *Raft) startRaft() {
 
 				// start to generate logs
 				go func() {
+					defer func() {
+						if err := recover(); err != nil {
+							log.Printf("[startRaft] err: %v", err)
+						}
+					}()
 					for i := 1; ; i++ {
 						rf.logs = append(rf.logs, LogEntry{rf.currentTerm, i, fmt.Sprintf("send to %d peers", len(rf.peers))})
 						time.Sleep(LogGenerateInterval)
